@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const SOSAlert = require('../models/SOSAlert');
 const ActivityLog = require('../models/ActivityLog');
+const LocationLog = require('../models/LocationLog');
 const Notification = require('../models/Notification');
 
 exports.getDashboardStats = async (req, res) => {
@@ -59,8 +60,40 @@ exports.getAllAlerts = async (req, res) => {
 
 exports.getActivityLogs = async (req, res) => {
   try {
-    const logs = await ActivityLog.find().populate('user', 'name email').sort({ createdAt: -1 }).limit(100);
+    const { search = '', action = '' } = req.query;
+    const query = {};
+    if (action) query.action = action;
+
+    let logs = await ActivityLog.find(query)
+      .populate('user', 'name email phone')
+      .sort({ createdAt: -1 })
+      .limit(200);
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      logs = logs.filter(
+        (l) =>
+          l.user?.name?.toLowerCase().includes(searchLower) ||
+          l.user?.email?.toLowerCase().includes(searchLower) ||
+          l.action?.toLowerCase().includes(searchLower) ||
+          l.details?.toLowerCase().includes(searchLower)
+      );
+    }
+
     res.json({ success: true, logs });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getLocationLogs = async (req, res) => {
+  try {
+    const locationLogs = await LocationLog.find()
+      .populate('user', 'name email phone')
+      .sort({ createdAt: -1 })
+      .limit(200);
+
+    res.json({ success: true, locationLogs });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -84,7 +117,7 @@ exports.respondToAlert = async (req, res) => {
       { new: true }
     ).populate('user', 'name email phone');
     if (!alert) return res.status(404).json({ success: false, message: 'Alert not found' });
-    // Notify the user
+    // Notify user
     await Notification.create({
       user: alert.user._id,
       message: helpSent
