@@ -9,15 +9,20 @@ const Dashboard = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState({ alerts: 0, contacts: 0, active: 0 });
   const [contactsList, setContactsList] = useState([]);
+  const [communityAlerts, setCommunityAlerts] = useState([]);
 
   useEffect(() => {
     Promise.all([
       api.get('/sos/my').catch(() => ({ data: { alerts: [] } })),
       api.get('/contacts').catch(() => ({ data: { contacts: [] } })),
-    ]).then(([alertsRes, contactsRes]) => {
+      api.get('/notifications').catch(() => ({ data: { notifications: [] } })),
+    ]).then(([alertsRes, contactsRes, notifsRes]) => {
       const alerts = alertsRes.data?.alerts || [];
       const contacts = contactsRes.data?.contacts || [];
+      const notifs = notifsRes.data?.notifications || [];
+
       setContactsList(contacts);
+      setCommunityAlerts(notifs.filter((n) => n.type === 'community_sos' && !n.isRead));
       setStats({
         alerts: alerts.length,
         contacts: contacts.length,
@@ -44,6 +49,24 @@ const Dashboard = () => {
           🚨 EMERGENCY SOS HUB
         </Link>
       </div>
+
+      {/* High Priority Community Danger Alert Banner */}
+      {communityAlerts.length > 0 && (
+        <div style={{ background: 'linear-gradient(135deg, #dc2626, #991b1b)', color: '#ffffff', padding: '16px 20px', borderRadius: '12px', marginBottom: '2rem', boxShadow: '0 8px 24px rgba(220,38,38,0.3)', border: '1px solid #fca5a5' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <FiAlertCircle size={28} color="#ffffff" style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <h4 style={{ margin: '0 0 4px 0', fontSize: '1.05rem', color: '#ffffff' }}>🚨 NEARBY USER DISTRESS ALERT ("HELP HER")</h4>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#fef2f2' }}>
+                {communityAlerts[0].message}
+              </p>
+            </div>
+            <Link to="/location" className="btn btn-light btn-sm" style={{ background: '#ffffff', color: '#991b1b', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              View Nearby Map ↗
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Safety Status Cards */}
       <div className="stats-grid">

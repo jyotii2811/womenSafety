@@ -7,26 +7,61 @@ import VoiceSOS from '../components/VoiceSOS';
 import PanicSiren from '../components/PanicSiren';
 import FakeCallModal from '../components/FakeCallModal';
 import HelplineWidget from '../components/HelplineWidget';
+import NearbyPoliceWidget from '../components/NearbyPoliceWidget';
+import MediaCapture from '../components/MediaCapture';
+import { performAutoEmergencyCapture } from '../utils/autoCameraCapture';
 
 // EMAILJS CONFIG
 const EMAILJS_SERVICE_ID  = 'service_aucagw7';
 const EMAILJS_TEMPLATE_ID = 'template_f1ky07s';
 const EMAILJS_PUBLIC_KEY  = 'bwU5fPO_Kx3nTCp-f';
 
-const sendEmailToContact = (contact, user, lat, lng) => {
-  const mapLink = lat && lng ? `https://www.google.com/maps?q=${lat},${lng}` : 'Location not available';
+const sendEmailToContact = (contact, user, lat, lng, photoUrl, videoUrl) => {
+  const userName = user?.name || 'Emergency Sender';
+  const userEmail = user?.email || 'Not provided';
+  const userPhone = user?.phone || 'Not provided';
+  const locationText = lat && lng ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'GPS coordinates not available';
+  const mapLink = lat && lng ? `https://www.google.com/maps?q=${lat},${lng}` : 'Location link not available';
+  const currentTime = new Date().toLocaleString();
+
+  let mediaDetails = '';
+  if (photoUrl) mediaDetails += `\n📸 Photo Snapshot Evidence: ${photoUrl}`;
+  if (videoUrl) mediaDetails += `\n🎥 Emergency Video Clip: ${videoUrl}`;
+
+  const formattedMessage = `🚨 URGENT SOS EMERGENCY ALERT!\n\nDear ${contact.name || 'Emergency Contact'},\n\n${userName} has triggered an EMERGENCY SOS DISTRESS SIGNAL and needs immediate help!\n\nSender Details:\n• Name: ${userName}\n• Email: ${userEmail}\n• Phone: ${userPhone}\n• Time: ${currentTime}\n\n📍 GPS Location: ${locationText}\n🗺️ Google Maps: ${mapLink}${mediaDetails}\n\nPlease try calling ${userName} immediately or contact emergency services (112 / 1091).`;
+
   return emailjs.send(
     EMAILJS_SERVICE_ID,
     EMAILJS_TEMPLATE_ID,
     {
-      to_email:  contact.email,
-      to_name:   contact.name,
-      from_name: user?.name || 'User',
-      from_email: user?.email || '',
-      phone:     user?.phone || 'Not provided',
-      location:  lat && lng ? `${lat}, ${lng}` : 'Not available',
-      map_link:  mapLink,
-      time:      new Date().toLocaleString(),
+      // Recipient Email Aliases for EmailJS Template Settings
+      to_email:        contact.email,
+      recipient_email: contact.email,
+      email:           contact.email,
+      to:              contact.email,
+      send_to:         contact.email,
+      contact_email:   contact.email,
+
+      // Recipient Name Aliases
+      to_name:         contact.name || 'Emergency Contact',
+      contact_name:    contact.name || 'Emergency Contact',
+
+      // Sender Info
+      from_name:       userName,
+      user_name:       userName,
+      name:            userName,
+      from_email:      userEmail,
+      reply_to:        userEmail,
+      phone:           userPhone,
+      user_phone:      userPhone,
+      location:        locationText,
+      map_link:        mapLink,
+      photo_url:       photoUrl || '',
+      video_url:       videoUrl || '',
+      time:            currentTime,
+      timestamp:       currentTime,
+      message:         formattedMessage,
+      message_html:    formattedMessage.replace(/\n/g, '<br/>'),
     },
     EMAILJS_PUBLIC_KEY
   );
@@ -38,6 +73,7 @@ const SOSPage = () => {
   const [user, setUser]       = useState(null);
   const [contacts, setContacts] = useState([]);
   const [shakeEnabled, setShakeEnabled] = useState(false);
+  const [capturedMedia, setCapturedMedia] = useState({});
 
   const fetchAlerts   = () => api.get('/sos/my').then(({ data }) => setAlerts(data.alerts)).catch(() => {});
   const fetchContacts = () => api.get('/contacts').then(({ data }) => setContacts(data.contacts)).catch(() => {});
@@ -51,18 +87,47 @@ const SOSPage = () => {
 
   const doTrigger = useCallback(async (lat, lng) => {
     try {
-      await api.post('/sos/trigger', { lat, lng });
+      toast('🚨 Auto-capturing 2 snapshots & 4s video evidence...', { icon: '📸' });
+      const media = await performAutoEmergencyCapture();
+
+      const photoData1 = capturedMedia.photoData || media.photoData1;
+      const photoData2 = media.photoData2;
+      const videoData  = capturedMedia.videoData || media.videoData;
+
+      // First upload media to backend to get downloadable URLs
+      let photoUrl = null;
+      let videoUrl = null;
+      try {
+        if (photoData1 || videoData) {
+          const uploadRes = await api.post('/sos/upload-media', {
+            photoData: photoData1,
+            videoData,
+          });
+          photoUrl = uploadRes.data?.photoUrl;
+          videoUrl = uploadRes.data?.videoUrl;
+        }
+      } catch (uploadErr) {
+        console.warn('Media upload to server warning:', uploadErr);
+      }
+
+      await api.post('/sos/trigger', {
+        lat,
+        lng,
+        photoData1,
+        photoData2,
+        videoData,
+      });
 
       const emailContacts = contacts.filter((c) => c.email);
       if (emailContacts.length === 0) {
         toast('⚠️ No contact emails found — notify contacts directly!', { icon: '⚠️' });
       } else {
         const results = await Promise.allSettled(
-          emailContacts.map((c) => sendEmailToContact(c, user, lat, lng))
+          emailContacts.map((c) => sendEmailToContact(c, user, lat, lng, photoUrl, videoUrl))
         );
         const sent   = results.filter((r) => r.status === 'fulfilled').length;
         const failed = results.filter((r) => r.status === 'rejected').length;
-        if (sent > 0)   toast.success(`🚨 SOS Alert sent to ${sent} contact(s)!`);
+        if (sent > 0)   toast.success(`🚨 SOS Alert & Media evidence sent to ${sent} contact(s)!`);
         if (failed > 0) toast.error(`${failed} email delivery failed.`);
       }
 
@@ -72,7 +137,7 @@ const SOSPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [contacts, user]);
+  }, [contacts, user, capturedMedia]);
 
   const triggerSOS = useCallback(() => {
     if (contacts.length === 0) {
@@ -172,6 +237,18 @@ const SOSPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Nearest Police Station & Safe Havens */}
+      <NearbyPoliceWidget />
+
+      {/* Live Photo & Short Video Emergency Capture */}
+      <MediaCapture onCaptureMedia={(media) => setCapturedMedia((prev) => ({ ...prev, ...media }))} />
+
+      {(capturedMedia.photoData || capturedMedia.videoData) && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #86efac', color: '#166534', padding: '10px 16px', borderRadius: '8px', marginBottom: '1.5rem', fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          📸 Live Media Captured & Ready: Next SOS trigger will automatically attach photo snapshot & video clip to contact emails!
+        </div>
+      )}
 
       {/* Interactive Emergency Tools Suite */}
       <h3 style={{ marginBottom: '1rem', color: 'var(--text)', fontSize: '1.2rem', fontWeight: 700 }}>

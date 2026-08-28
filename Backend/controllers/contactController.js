@@ -1,8 +1,12 @@
 const EmergencyContact = require('../models/EmergencyContact');
 
 exports.getContacts = async (req, res) => {
-  const contacts = await EmergencyContact.find({ user: req.user._id });
-  res.json({ success: true, contacts });
+  try {
+    const contacts = await EmergencyContact.find({ user: req.user._id });
+    res.json({ success: true, contacts });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 };
 
 exports.addContact = async (req, res) => {
